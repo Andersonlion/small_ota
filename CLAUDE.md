@@ -79,52 +79,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Flash Abstraction Layer (FAL)
 
-项目使用 [RT-Thread-packages/fal](https://github.com/RT-Thread-packages/fal)（独立版，已归档但仍然可用），该库**对 RT-Thread 无依赖，可用于裸机**。
+项目使用定制版 FAL（已去除 RT-Thread 强依赖），位于 `lib_fal/fal/`。
 
-### 需要引入的源文件
+### 源文件清单
 
 ```
-fal/
-├── inc/fal.h
-├── inc/fal_def.h
-├── src/fal.c
-├── src/fal_flash.c
-├── src/fal_partition.c
+lib/lib_fal/
+├── fal/
+│   ├── inc/
+│   │   ├── fal.h           # 主头文件（RT-Thread 声明用 #ifdef __RTTHREAD__ 保护）
+│   │   └── fal_def.h       # 结构体定义 + 日志宏 + 内存分配宏
+│   └── src/
+│       ├── fal.c           # fal_init() + fal_init_check()
+│       ├── fal_flash.c     # Flash 设备注册与查找
+│       ├── fal_partition.c # 分区表管理 + fal_partition_read/write/erase
+│       └── fal_rtt.c       # RT-Thread 适配（#ifdef RT_VER_NUM，bare metal 下不编译）
+├── port/
+│   ├── fal_cfg.h           # Flash 设备表 + 分区表
+│   ├── fal_flash_port.c    # 移植模板（sysprintf + flash ops 空壳）
+│   └── example/            # SWM320 等参考移植
+└── FAL_USAGE.md            # FAL 详细使用说明
 ```
 
-### 移植需要做的事
-
-1. **建一个空的 `rtconfig.h`**（FAL 的 `fal.h` 强制 include 了它，裸机环境建空文件即可）
-2. **实现 Flash 驱动回调**并注册：
-
-```c
-const struct fal_flash_dev internal_flash = {
-    .name       = "internal_flash",
-    .addr       = FLASH_BASE_ADDR,
-    .len        = FLASH_TOTAL_SIZE,
-    .blk_size   = FLASH_ERASE_MIN_SIZE,
-    .ops        = {init, read, write, erase},
-    .write_gran = FLASH_WRITE_GRAN,   // NOR=1, STM32F4=8, STM32F1=32, STM32L4=64
-};
-```
-
-3. **创建 `fal_cfg.h`**，定义 Flash 设备表和分区表。
-4. **启动时调用 `fal_init()`**。
-
-### 核心 API
-
-```c
-int fal_init(void);
-
-// 按分区名查找
-const struct fal_partition *fal_partition_find(const char *name);
-
-// 分区操作（addr 是分区内偏移）
-int fal_partition_read(const struct fal_partition *part, uint32_t addr, uint8_t *buf, size_t size);
-int fal_partition_write(const struct fal_partition *part, uint32_t addr, const uint8_t *buf, size_t size);
-int fal_partition_erase(const struct fal_partition *part, uint32_t addr, size_t size);
-int fal_partition_erase_all(const struct fal_partition *part);
-```
+详细使用说明见 `lib/lib_fal/FAL_USAGE.md`。
 
 ---
 
@@ -263,7 +240,7 @@ int net_dev_http_get_range(uint32_t offset, uint16_t len, uint8_t *buf);
 
 ---
 
-## 目录结构规划
+## 目录结构
 
 ```
 small_ota/
@@ -276,16 +253,14 @@ small_ota/
 │   ├── ota_core.c          # OTA 核心逻辑
 │   ├── ota_config.c        # config 分区读写
 │   └── net_dev.c           # 网络设备抽象层通用实现
-├── port/
-│   ├── net_dev_uart.c      # UART 网络设备驱动适配示例
-│   ├── fal_flash_port.c    # FAL Flash 驱动移植示例
-│   └── fal_cfg.h           # FAL 分区表配置
-├── thirdparty/
-│   └── fal/                # 独立 FAL 源码
+├── lib/
+│   └── lib_fal/            # FAL 库（Flash 抽象层 + 移植层 + 使用文档）
 ├── tools/
 │   └── ota_packer.py       # PC 端固件打包工具
 └── CLAUDE.md
 ```
+
+所有库文件统一放在 `lib/` 目录下，命名前缀 `lib_`。
 
 ---
 
