@@ -244,23 +244,32 @@ int net_dev_http_get_range(uint32_t offset, uint16_t len, uint8_t *buf);
 
 ```
 small_ota/
-├── inc/
-│   ├── ota_core.h          # OTA 核心 API
-│   ├── ota_config.h        # config 结构体定义
-│   ├── net_dev.h           # 网络设备抽象层接口
-│   └── ota_port.h          # 移植适配接口（平台相关）
-├── src/
-│   ├── ota_core.c          # OTA 核心逻辑
-│   ├── ota_config.c        # config 分区读写
-│   └── net_dev.c           # 网络设备抽象层通用实现
+├── inc/                          # 共享头文件
+│   ├── ota_types.h               # 常量 + ota_config_t 结构体
+│   ├── ota_config.h              # config 分区读写 API
+│   └── crc16.h                   # CRC16-MODBUS
+├── src/                          # 共享实现
+│   ├── ota_config.c              # config 分区读写（基于 FAL）
+│   └── crc16.c                   # CRC16 查表实现
+├── core/
+│   ├── BL/                       # Bootloader 模块
+│   │   ├── readme.md
+│   │   ├── bl_main.h / .c        # 入口：fal_init → config → download → jump
+│   │   ├── bl_jump.h / .c        # ARM Cortex-M 跳转（关中断→VTOR→MSP→跳转）
+│   │   └── ota_core.h / .c       # OTA 下载循环（逐片 GET→CRC→写 Flash→更新进度）
+│   └── network/                  # 网络模块（三层架构）
+│       ├── readme.md
+│       ├── net_dev.h / .c        # 抽象层：阻塞 GET Range，循环缓冲，HTTP 头解析
+│       └── net_drv.h             # 驱动适配接口（ops 结构体 + 环形缓冲区 API）
 ├── lib/
-│   └── lib_fal/            # FAL 库（Flash 抽象层 + 移植层 + 使用文档）
+│   ├── lib_fal/                  # FAL 库（Flash 抽象层 + 移植层）
+│   └── lib_stropt/               # 字符串解析库（Content-Length 解析等）
 ├── tools/
-│   └── ota_packer.py       # PC 端固件打包工具
+│   └── ota_packer.py             # PC 端固件打包工具
 └── CLAUDE.md
 ```
 
-所有库文件统一放在 `lib/` 目录下，命名前缀 `lib_`。
+所有库文件统一放在 `lib/` 下，命名前缀 `lib_`。核心模块放在 `core/` 下按功能分组。
 
 ---
 
