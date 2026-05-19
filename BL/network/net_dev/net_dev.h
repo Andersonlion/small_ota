@@ -2,15 +2,42 @@
 #define _NET_DEV_H_
 
 #include <stdint.h>
-#include "net_drv.h"
+#include "../net_drv_port/net_drv.h"
+
+#define RING_BUFFER_SIZE 1024
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef enum {
+    STATE_IDLE = 0,
+    STATE_CONNECT,
+    STATE_DISCONNECT,
+    STATE_CONNECT_ERROR
+    
+} net_dev_msta_t;
+
+typedef enum {
+    STATE_IDLE = 0,
+    STATE_BUSY,
+    STATE_SSTA_ERROR,
+    STATE_TIMEOUT
+} net_dev_ssta_t;
+
+typedef struct {
+    net_dev_msta_t msta;
+    net_dev_ssta_t ssta;
+    uint8_t recv_buf[1024];
+    uint8_t send_buf[512];
+    
+}net_dev_t;
+
+
 
 /* =============== driver registration (call before net_dev_open) =============== */
 
-int net_drv_register(const net_drv_ops_t *ops);
+int net_dev_init(net_dev_t * net_dev);
 
 /* =============== network device abstract API =============== */
 

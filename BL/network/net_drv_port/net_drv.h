@@ -1,18 +1,22 @@
+/**
+ * Low-level driver operations.
+ * Implement these for your UART/SPI/I2C hardware.
+ * All operations are synchronous (blocking).
+ * you need to use send_bytes() to ring_buffer or ring_buffer() of net_dev in interrupt or other tasks to communicate with tcp server.
+ * 
+ */
+
 #ifndef _NET_DRV_H_
 #define _NET_DRV_H_
 
 #include <stdint.h>
 #include <stddef.h>
-
+#include "lib.h"
+extern ring_buffer_t rb;
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * Low-level driver operations.
- * Implement these for your UART/SPI/I2C hardware.
- * All operations are synchronous (blocking).
- */
 
 /* ring buffer capacity (tune per platform) */
 #ifndef NET_DRV_RING_BUF_SIZE
@@ -38,7 +42,7 @@ typedef struct {
      * @param len    number of bytes
      * @return actual bytes sent, -1 = error
      */
-    int  (*send)(const uint8_t *data, size_t len);
+    int  (*send)(const uint8_t *data,size_t len);
 
     /**
      * Receive one byte from hardware (blocking with timeout).
@@ -46,23 +50,19 @@ typedef struct {
      * @return byte value (0..255), -1 = timeout / no data
      */
     int  (*recv_byte)(uint32_t timeout_ms);
+
 } net_drv_ops_t;
 
-/* =============== ring buffer (internal use by net_dev) =============== */
+/*connect to server ,this func will be call in a while block*/
+int connect_to_TCPServer();
 
-typedef struct {
-    uint8_t buf[NET_DRV_RING_BUF_SIZE];
-    volatile uint16_t head;   /* write index (ISR or polling) */
-    volatile uint16_t tail;   /* read index (consumer) */
-} net_ring_buf_t;
+/*send msg to TCPServer*/
+int TCP_send_msg();
 
-void     net_ring_init(net_ring_buf_t *rb);
-int      net_ring_is_empty(const net_ring_buf_t *rb);
-int      net_ring_is_full(const net_ring_buf_t *rb);
-uint16_t net_ring_free(const net_ring_buf_t *rb);
-uint16_t net_ring_avail(const net_ring_buf_t *rb);
-int      net_ring_put(net_ring_buf_t *rb, uint8_t byte);
-int      net_ring_get(net_ring_buf_t *rb, uint8_t *byte);
+/*throw msg to ring buffer*/
+int TCP_read_msg(ring_buffer_t* rb);
+
+
 
 #ifdef __cplusplus
 }

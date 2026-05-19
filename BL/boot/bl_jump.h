@@ -6,7 +6,7 @@
 /**
  * Jump to application at specified address.
  * Disables interrupts, sets VTOR, MSP from app vector, then jumps.
- * Never returns.
+ * No and never returns
  *
  * @param app_addr  start address of app partition
  */

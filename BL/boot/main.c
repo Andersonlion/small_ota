@@ -1,12 +1,6 @@
-#include "bl_main.h"
-#include "bl_jump.h"
-#include "ota_core.h"
-#include "ota_config.h"
-#include "net_dev.h"
-#include "fal.h"
-#include <string.h>
+#include "bl.h"
 
-void bl_main(void)
+void main(void)
 {
     const struct fal_partition *app_part;
     ota_config_t cfg;

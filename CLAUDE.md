@@ -21,9 +21,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 启动流程
 
 ```
-上电 → Bootloader
+上电 → main() (BL/boot/main.c)
         ├─ fal_init()
         ├─ 读取 config 分区 ota_config_t
+        ├─ URL 无效 → 写入 CONFIG_DEFAULT_OTA_URL
         ├─ enable != 0xA5A5 → 直接跳转 app（正常启动）
         └─ enable == 0xA5A5
              ├─ net_dev_open() 初始化外部网络模块
@@ -49,25 +50,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 网络架构（三层）
 
 ```
-┌─────────────────────────────┐
-│  OTA 核心逻辑               │  不知道底层通信方式
-│  - get_slice(offset, size)  │
-│  - crc16 校验 + FAL 写 Flash │
-└──────────┬──────────────────┘
+┌─────────────────────────────────┐
+│  OTA 核心逻辑                    │  不知道底层通信方式
+│  - get_slice(offset, size)      │
+│  - crc16 校验 + FAL 写 Flash     │
+└──────────┬──────────────────────┘
            │
-┌──────────▼──────────────────┐
-│  网络设备抽象层 (net_dev)    │  统一的 net_dev 接口
-│  - net_dev_open()           │  循环缓冲区在此层
-│  - net_dev_http_get_range() │
-│  - net_dev_close()          │
-└──────────┬──────────────────┘
+┌──────────▼──────────────────────┐
+│  网络设备抽象层 (net_dev)         │  统一的 net_dev 接口
+│  - net_dev_init()               │  使用 lib_ring_buffer 作为缓冲区
+│  - net_dev_open()               │  HTTP 头解析用自建状态机
+│  - net_dev_http_get_range()     │
+│  - net_dev_close()              │
+│  - net_drv_register()           │
+└──────────┬──────────────────────┘
            │
-┌──────────▼──────────────────┐
-│  驱动适配层 (移植实现)       │  UART/SPI/I2C 具体实现
-│  - 硬件初始化                │  封装 AT 指令或自定义帧
-│  - 收发数据到上层循环缓冲区   │  中断接收 + 同步读取
-│  - 封装通信协议              │
-└──────────┬──────────────────┘
+┌──────────▼──────────────────────┐
+│  驱动适配层 (net_drv_port)        │  UART/SPI/I2C 具体实现
+│  - net_drv_ops_t 回调注册        │  封装 AT 指令或自定义帧
+│  - init / deinit / send         │  中断接收写入 ring buffer
+│  - recv_byte (带超时)            │  TCP 辅助函数（stub，待实现）
+│  - connect_to_TCPServer         │
+│  - TCP_send_msg / TCP_read_msg  │
+└──────────┬──────────────────────┘
            │
    ┌───────┴───────┐
    │ 外部联网模块    │  跑完整 TCP/HTTP 栈
@@ -79,7 +84,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Flash Abstraction Layer (FAL)
 
-项目使用定制版 FAL（已去除 RT-Thread 强依赖），位于 `lib_fal/fal/`。
+项目使用定制版 FAL（已去除 RT-Thread 强依赖），位于 `lib/lib_fal/`。
 
 ### 源文件清单
 
@@ -200,23 +205,23 @@ App 不参与下载过程，仅负责触发升级：
 
 1. 收到升级通知（途径由 App 自行决定，不纳入本框架）
 2. 调用框架提供的 API 写入 config 分区字段（url、total_size）
-3. 调用 `ota_set_enable()` 写 enable = 0xA5A5
+3. 调用 `ota_config_set_enable()` 写 enable = 0xA5A5
 4. 调用系统复位
 
-框架提供以下 API 供 App 使用：
+框架提供以下 API 供 App 使用（声明在 `BL/ota/ota_config.h`）：
 
 ```c
 // 设置 OTA 使能标志，App 调用后重启即可触发升级
-int ota_set_enable(void);
+int ota_config_set_enable(void);
 
-// 清除 OTA 使能标志
-int ota_clear_enable(void);
+// 重置整个 config（清除所有字段，含 enable）
+int ota_config_reset(void);
 
-// 写入升级 URL
-int ota_set_url(const char *url, uint16_t url_len);
+// 写入升级 URL（自动处理 \0 截断）
+int ota_config_set_url(const char *url);
 
 // 写入镜像总大小
-int ota_set_total_size(uint32_t size);
+int ota_config_set_total_size(uint32_t size);
 ```
 
 ---
@@ -244,32 +249,38 @@ int net_dev_http_get_range(uint32_t offset, uint16_t len, uint8_t *buf);
 
 ```
 small_ota/
-├── inc/                          # 共享头文件
-│   ├── ota_types.h               # 常量 + ota_config_t 结构体
-│   ├── ota_config.h              # config 分区读写 API
-│   └── crc16.h                   # CRC16-MODBUS
-├── src/                          # 共享实现
-│   ├── ota_config.c              # config 分区读写（基于 FAL）
-│   └── crc16.c                   # CRC16 查表实现
-├── core/
-│   ├── BL/                       # Bootloader 模块
-│   │   ├── readme.md
-│   │   ├── bl_main.h / .c        # 入口：fal_init → config → download → jump
-│   │   ├── bl_jump.h / .c        # ARM Cortex-M 跳转（关中断→VTOR→MSP→跳转）
-│   │   └── ota_core.h / .c       # OTA 下载循环（逐片 GET→CRC→写 Flash→更新进度）
-│   └── network/                  # 网络模块（三层架构）
-│       ├── readme.md
-│       ├── net_dev.h / .c        # 抽象层：阻塞 GET Range，循环缓冲，HTTP 头解析
-│       └── net_drv.h             # 驱动适配接口（ops 结构体 + 环形缓冲区 API）
+├── BL/                           # Bootloader 源码（所有核心模块）
+│   ├── framwork.h                # 空文件（占位）
+│   ├── boot/
+│   │   ├── bl.h                  # 引导入口聚合头文件
+│   │   ├── bl_jump.h / .c        # ARM Cortex-M 跳转（支持 ARMCC/GCC/IAR）
+│   │   ├── main.c                # 入口：fal_init → config → download → jump
+│   │   └── readme.md
+│   ├── network/
+│   │   ├── net_dev/
+│   │   │   ├── net_dev.h / .c    # 抽象层：阻塞 GET Range，HTTP 头解析，驱动注册
+│   │   │   └── readme.md
+│   │   └── net_drv_port/
+│   │       ├── net_drv.h         # 驱动 ops 结构体 + TCP 辅助函数声明
+│   │       └── net_drv.c         # TCP 辅助函数（connect/send/read stubs）
+│   └── ota/
+│       ├── ota_types.h           # 常量 + ota_config_t 结构体
+│       ├── ota_config.h / .c     # config 分区读写 API（基于 FAL）
+│       └── ota_core.h / .c       # OTA 下载循环（逐片 GET→CRC→写 Flash→更新进度）
 ├── lib/
+│   ├── lib.h                     # 聚合头文件（include 所有 lib）
+│   ├── lib_crc16/
+│   │   ├── crc16.h / .c          # CRC16-MODBUS（多项式 0x8005）
 │   ├── lib_fal/                  # FAL 库（Flash 抽象层 + 移植层）
-│   └── lib_stropt/               # 字符串解析库（Content-Length 解析等）
-├── tools/
-│   └── ota_packer.py             # PC 端固件打包工具
+│   ├── lib_ring_buffer/
+│   │   ├── ring_buffer.h / .c    # 通用环形缓冲区
+│   └── lib_stropt/               # 字符串解析（Content-Length 等）
 └── CLAUDE.md
 ```
 
-所有库文件统一放在 `lib/` 下，命名前缀 `lib_`。核心模块放在 `core/` 下按功能分组。
+所有库文件统一放在 `lib/` 下，命名前缀 `lib_`。BL 模块放在 `BL/` 下按功能分组。
+
+**注意：项目当前没有 Makefile / CMakeLists.txt 等构建配置文件。**
 
 ---
 
@@ -282,3 +293,71 @@ small_ota/
 5. **镜像打包时最后一个切片必须填充到 514 字节**，PC 打包工具负责保证
 6. **enable 标志独立于 total_size**，App 最后写 enable 保证写入原子性
 7. **current_offset 双重职责**：HTTP 续传位置计算 + App 分区写入偏移
+
+---
+
+## 库说明
+
+### lib.h — 聚合头文件
+
+`lib/lib.h` 是统一的库入口，include 了所有子库：
+
+```c
+#include "./lib_crc16/crc16.h"
+#include "./lib_fal/fal/inc/fal.h"
+#include "./lib_ring_buffer/ring_buffer.h"
+#include "./lib_stropt/stropt.h"
+```
+
+BL 模块通过 `#include "lib.h"` 获取所有库接口。注意：此 include 路径依赖构建系统的 `-I lib/` 配置。
+
+### lib_ring_buffer — 通用环形缓冲区
+
+`lib/lib_ring_buffer/ring_buffer.h` 提供独立于业务的环形缓冲区，由 `net_dev` 层使用。
+
+API：
+- `ring_buffer_init(rb, buf, size)` — 初始化
+- `ring_buffer_clear(rb)` — 清空（仅重置指针，不清零数据）
+- `ring_buffer_is_empty(rb)` — 判空
+- `ring_buffer_available(rb)` — 可读字节数
+- `ring_buffer_write(rb, data, len)` — 写入（处理回绕）
+- `ring_buffer_read(rb, out_buf, max_len)` — 读取（处理回绕）
+
+### lib_stropt — 字符串解析
+
+`lib/lib_stropt/stropt.h` 提供 HTTP 头解析工具：
+- `stropt_parse_content_length()` — 解析 Content-Length 值
+- `stropt_find_body_start()` — 查找 `\r\n\r\n` 分隔位置
+- `stropt_is_valid()` — 检查字符串是否非空且非 Flash 擦除态
+
+注意：当前 `net_dev.c` 使用自己的 `skip_http_header()` 状态机解析 HTTP 头，`stropt` 尚未被调用。
+
+### lib_crc16 — CRC16-MODBUS
+
+`lib/lib_crc16/crc16.h` 提供 `crc16_modbus(data, len)` 函数，256 条目查表实现，512 字节 ROM。
+
+---
+
+## 当前开发状态
+
+### 无构建系统
+
+项目尚无 Makefile / CMakeLists.txt。所有文件通过 include 路径组合，由 IDE 或手动管理。
+
+### 已知问题
+
+以下问题是当前代码中存在的 bug，修改相关模块时需注意：
+
+1. **net_dev.c 中 `drv_ops` 未声明**：`drv_ops` 在 `net_dev_open()`、`net_dev_close()`、`net_dev_http_get_range()` 和 `net_drv_register()` 中使用，但该翻译单元内未声明此全局变量（应添加 `static net_drv_ops_t drv_ops;`）。
+
+2. **net_dev.c 中 `ring_flush()` 和 `ring_read_byte()` 未定义**：V1 代码中这两个函数在 net_dev.c 内为 static，但 V2 拆分到 `lib_ring_buffer` 后丢失。`ring_flush` 可替换为 `ring_buffer_clear(rb)`；`ring_read_byte` 需要新增实现（带超时的单字节读取，内部调用 `drv_ops.recv_byte`）。
+
+3. **net_dev.c 中 `net_dev_open()` 重复 init**：`drv_ops.init()` 被调用了两次（L74-L78），应简化为单次调用。
+
+4. **ring_buffer.h 函数名不匹配**：头文件声明 `get_ring_buffer_available()`，但 .c 文件实现的是 `ring_buffer_available()`。
+
+5. **net_dev.h 中枚举值冲突**：`net_dev_msta_t` 和 `net_dev_ssta_t` 都定义了 `STATE_IDLE = 0`，会导致编译错误。
+
+6. **net_drv.h 中 `extern ring_buffer_t rb`**：引用了 `net_dev.c` 中定义的 `rb`，需要确保构建时链接顺序正确。
+
+7. **`BL/framwork.h` 为空文件**，无实际用途。

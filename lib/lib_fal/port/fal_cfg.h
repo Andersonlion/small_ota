@@ -21,6 +21,7 @@ extern const struct fal_flash_dev onchip_flash;
 
 /* ====================== Partition Configuration ========================== */
 
+/*follow is default config you can change for your own need*/
 /*
  * Flash layout:
  * +---------------+ 0x00000000
@@ -31,15 +32,15 @@ extern const struct fal_flash_dev onchip_flash;
  * |  app          |  remaining
  * +---------------+
  */
-
+/* adjust to your actual flash size */
 #define _f_boot_start     0
-#define _f_boot_size       ( 64 * 1024)
+#define _f_boot_size       ( 64 * 1024) 
 
 #define _f_conf_start      ( 64 * 1024)
 #define _f_conf_size       (  4 * 1024)
 
 #define _f_app_start       ( 68 * 1024)
-#define _f_app_size        (444 * 1024)   /* adjust to your actual flash size */
+#define _f_app_size        (444 * 1024)   
 
 /*----------------------------------------------------------------------------------*/
 
